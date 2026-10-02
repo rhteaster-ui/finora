@@ -1,0 +1,2 @@
+import {spawn} from 'node:child_process';
+const args=process.argv.slice(2);const port=args.includes('--port')?args[args.indexOf('--port')+1]:'3000';const child=spawn(process.execPath,['node_modules/next/dist/bin/next','dev','-H','0.0.0.0','-p',port],{stdio:'inherit'});process.on('SIGINT',()=>child.kill('SIGINT'));process.on('SIGTERM',()=>child.kill('SIGTERM'));child.on('exit',code=>process.exit(code||0));

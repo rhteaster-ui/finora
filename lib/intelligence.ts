@@ -1,0 +1,52 @@
+import {type Context,type Transaction,type Capital,type Category,type Debt,type Payment,type Limit,type Goal,summary,bounds,money,monthKey,localDate,debtState,inBounds} from './finance';
+export type FinanceState={tx:Transaction[];capitals:Capital[];categories:Category[];debts:Debt[];payments:Payment[];limits:Limit[];goals:Goal[]};
+export type Finding={id:string;context:Context;type:string;title:string;message:string;priority:number;recordIds:string[];from:string;to:string;key:string;formula:string};
+export function monthToDateComparison(today=localDate()){
+ const d=new Date(`${today}T12:00:00`),last=new Date(d.getFullYear(),d.getMonth(),0);
+ return {current:{from:monthKey(d)+'-01',to:today},previous:{from:monthKey(last)+'-01',to:localDate(new Date(last.getFullYear(),last.getMonth(),Math.min(d.getDate(),last.getDate())))}};
+}
+export function observe(state:FinanceState,context:Context,today=localDate()):Finding[]{
+ const ranges=monthToDateComparison(today),rows=state.tx.filter(x=>x.context===context&&inBounds(x.date,ranges.current));const s=summary(rows,[]),previous=summary(state.tx,[],ranges.previous),items:Finding[]=[];
+ const push=(type:string,title:string,message:string,priority:number,recordIds:string[],formula:string,key=type)=>items.push({id:`${context}:${today.slice(0,7)}:${key}`,key:`${context}:${today.slice(0,7)}:${key}`,context,type,title,message,priority,recordIds,from:ranges.current.from,to:today,formula});
+ if(context==='personal')for(const limit of state.limits){const matching=rows.filter(x=>x.type==='expense'&&(!limit.categoryId||x.categoryId===limit.categoryId)),spent=matching.reduce((a,x)=>a+x.amount,0);if(limit.amount>0&&spent>=limit.amount*limit.warningThreshold)push('budget',spent>=limit.amount?'Batas pengeluaran terlewati':'Mendekati batas pengeluaran',`${money(spent)} dari ${money(limit.amount)} telah digunakan${limit.categoryId?' untuk '+(state.categories.find(c=>c.id===limit.categoryId)?.name||'kategori ini'):''}.`,spent>=limit.amount?3:2,matching.map(x=>x.id),'Jumlah pengeluaran periode berjalan ÷ batas yang kamu atur.',`budget:${limit.id}:${spent>=limit.amount?'over':'near'}`)}
+ const net=context==='personal'?s.net:s.profit;if(rows.length&&net<0)push('cashflow','Arus kas perlu perhatian',`Pengeluaran periode berjalan melebihi pemasukan sebesar ${money(-net)}.`,2,rows.map(x=>x.id),'Pemasukan − pengeluaran; bisnis memperhitungkan HPP.');
+ const spending=context==='personal'?s.expense:s.cost+s.hpp,oldSpending=context==='personal'?previous.expense:previous.cost+previous.hpp;
+ if(oldSpending>=50000&&spending>oldSpending*1.3&&spending-oldSpending>=50000)push('spike','Pengeluaran meningkat',`Naik ${Math.round((spending-oldSpending)/oldSpending*100)}% dibanding tanggal setara bulan lalu (${money(oldSpending)} → ${money(spending)}).`,2,rows.filter(x=>x.type==='expense'||context==='business'&&x.hppAmount>0).map(x=>x.id),'Perbandingan bulan berjalan dengan jumlah hari yang sama pada bulan sebelumnya.');
+ if(context==='business'){const g=state.goals.find(x=>x.month===today.slice(0,7));if(g?.profitTarget&&s.profit>=g.profitTarget*.5){const milestone=s.profit>=g.profitTarget?100:s.profit>=g.profitTarget*.75?75:50;push('target',milestone===100?'Target laba tercapai':'Semakin dekat dengan tujuan',`Laba ${money(s.profit)} dari target ${money(g.profitTarget)} (${Math.round(s.profit/g.profitTarget*100)}%).`,1,rows.map(x=>x.id),'Laba bersih bulan ini ÷ target laba.',`target:${milestone}`)}}
+ for(const d of state.debts.filter(x=>x.context===context&&x.dueDate)){const r=debtState(d,state.payments,today),days=Math.ceil((Date.parse(d.dueDate!+'T12:00:00')-Date.parse(today+'T12:00:00'))/86400000);if(r.remaining>0&&days<=7)push('due',days<0?'Kewajiban melewati tenggat':'Tenggat semakin dekat',`${d.kind==='debt'?'Utang':'Piutang'} ${d.personName}: sisa ${money(r.remaining)}, jatuh tempo ${d.dueDate}.`,days<0?3:2,[],`Pokok − pembayaran tercatat atas nama ${d.personName}. Pencatatan kewajiban tidak otomatis mengubah saldo kas.`,`due:${d.id}:${days<0?'late':'soon'}`)}
+ const seen=new Map<string,Transaction>();for(const row of rows){const k=[row.type,row.amount,row.date,row.description.trim().toLowerCase()].join('|');const other=seen.get(k);if(other)push('duplicate','Dua catatan terlihat sama',`${row.description} · ${money(row.amount)} pada ${row.date}. Periksa apakah keduanya memang berbeda.`,1,[other.id,row.id],'Nominal, jenis, tanggal, dan deskripsi sama. Ini hanya dugaan duplikat.',`duplicate:${other.id}:${row.id}`);else seen.set(k,row)}
+ return items.sort((a,b)=>b.priority-a.priority).slice(0,12);
+}
+export function simulate(input:{context:Context;income:number;expense:number;hpp:number;revenueChange:number;expenseChange:number;hppMode:'ratio'|'fixed';months:number;balance:number}){
+ const {context,income,expense,hpp,revenueChange,expenseChange,hppMode}=input;
+ const nextIncome=Math.max(0,Math.round(income*(1+revenueChange/100))),nextExpense=Math.max(0,Math.round(expense*(1+expenseChange/100))),nextHpp=context==='business'?Math.max(0,Math.round(hpp*(hppMode==='ratio'?1+revenueChange/100:1))):0;
+ const baseNet=income-expense-(context==='business'?hpp:0),net=nextIncome-nextExpense-nextHpp;
+ return {nextIncome,nextExpense,nextHpp,baseNet,net,difference:net-baseNet,series:Array.from({length:input.months+1},(_,i)=>({month:i===0?'Kini':`Bulan ${i}`,baseline:input.balance+baseNet*i,scenario:input.balance+net*i}))};
+}
+export type ToolQuery={name:'summary'|'search'|'categories'|'debts'|'compare';from?:string;to?:string;query?:string;categoryId?:string;type?:'income'|'expense'};
+export function executeReadTool(tool:ToolQuery,state:FinanceState,context:Context,today=localDate()){
+ if(!['summary','search','categories','debts','compare'].includes(tool.name))throw Error('Alat baca tidak tersedia.');
+ const from=tool.from||today.slice(0,7)+'-01',to=tool.to||today;
+ if(!/^\d{4}-\d{2}-\d{2}$/.test(from)||!/^\d{4}-\d{2}-\d{2}$/.test(to)||from>to)throw Error('Rentang alat baca tidak valid.');
+ if([from,to].some(d=>Number.isNaN(Date.parse(d+'T12:00:00Z'))||new Date(d+'T12:00:00Z').toISOString().slice(0,10)!==d))throw Error('Tanggal alat baca tidak valid.');
+ const rows=state.tx.filter(x=>x.context===context&&inBounds(x.date,{from,to})),selected=rows.filter(x=>(!tool.query||`${x.description} ${x.sourceDestination||''} ${state.categories.find(c=>c.id===x.categoryId)?.name||''}`.toLowerCase().includes(tool.query.toLowerCase()))&&(!tool.type||tool.type===x.type)&&(!tool.categoryId||x.categoryId===tool.categoryId));
+ if(tool.name==='debts')return {context,records:state.debts.filter(x=>x.context===context).map(d=>({...d,...debtState(d,state.payments,today)}))};
+ if(tool.name==='compare'){const r=monthToDateComparison(today);return {context,ranges:r,current:contextSummary(state,context,r.current),previous:contextSummary(state,context,r.previous),recordIds:state.tx.filter(x=>x.context===context&&(inBounds(x.date,r.current)||inBounds(x.date,r.previous))).map(x=>x.id)}}
+ if(tool.name==='categories')return {context,from,to,groups:Object.entries(rows.filter(x=>x.type==='expense').reduce<Record<string,number>>((a,x)=>(a[x.categoryId]=(a[x.categoryId]||0)+x.amount,a),{})).map(([id,amount])=>({id,name:state.categories.find(c=>c.id===id)?.name,amount,recordIds:rows.filter(x=>x.type==='expense'&&x.categoryId===id).map(x=>x.id)}))};
+ if(tool.name==='summary')return {context,from,to,...contextSummary(state,context,{from,to}),recordIds:[...rows.map(x=>x.id),...(context==='business'?state.capitals.filter(x=>inBounds(x.date,{from,to})).map(x=>x.id):[])]};
+ return {context,from,to,count:selected.length,total:selected.reduce((a,x)=>a+x.amount,0),shown:Math.min(selected.length,40),records:[...selected].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,40)};
+}
+export function contextSummary(state:FinanceState,context:Context,range?:{from:string;to:string}){const s=summary(state.tx.filter(x=>x.context===context),context==='business'?state.capitals:[],range);return context==='personal'?{income:s.income,expense:s.expense,net:s.net}:{revenue:s.revenue,hpp:s.hpp,expense:s.cost,profit:s.profit,capital:s.capital,withdraw:s.withdraw,cashMovement:s.businessBalance}}
+export function parseRupiah(raw:string){let v=raw.toLowerCase().trim().replace(/^rp\s*/,''),factor=1;const suffix=v.match(/\s*(ribu|rb|k|juta|jt)$/);if(suffix){factor=['juta','jt'].includes(suffix[1])?1e6:1e3;v=v.slice(0,suffix.index).trim();v=v.replace(',','.')}else v=v.replace(/\./g,'').replace(',','.');const n=Number(v)*factor;return Number.isSafeInteger(n)&&n>0&&n<=1e12?n:null}
+// Conservative offline parser: one unambiguous transaction only; cloud handles broader language.
+export function localTransactionDraft(text:string,context:Context,categories:Category[],rules:{phrase:string;categoryId:string;context:Context;active:boolean}[],today=localDate()){
+ if(!/\b(catat|beli|bayar|keluar|masuk|gaji|order|jual|dapat|dapet|terima)\b/i.test(text)||/\b(hapus|ubah|jangan|batal|kemarin lusa|besok)\b/i.test(text))return null;
+ const matches=[...text.matchAll(/(?:rp\s*)?(\d+(?:[.,]\d+)*)\s*(ribu|rb|k|juta|jt)?\b/gi)];if(matches.length!==1)return null;const m=matches[0],amount=parseRupiah(m[0]);if(!amount)return null;
+ const type=/\b(masuk|gaji|order|jual|dapat|dapet|terima)\b/i.test(text)?'income':'expense',available=categories.filter(c=>c.context===context&&c.type===type&&!c.archived);
+ const rule=rules.find(r=>r.active&&r.context===context&&text.toLowerCase().includes(r.phrase.toLowerCase())&&available.some(c=>c.id===r.categoryId));
+ const mapping:[RegExp,string][]=[[/makan|kopi|minum|sarapan|nasi/i,'Makan & Minum'],[/bensin|ojek|transport|parkir/i,'Transportasi'],[/belanja|baju|sepatu/i,'Belanja'],[/listrik|internet|tagihan|pulsa/i,'Tagihan'],[/gaji/i,'Gaji'],[/freelance/i,'Freelance'],[/order|jual/i,'Penjualan'],[/server/i,'Server'],[/domain/i,'Domain'],[/iklan/i,'Iklan']];
+ const category=rule?available.find(c=>c.id===rule.categoryId):available.find(c=>mapping.some(([regex,name])=>regex.test(text)&&name===c.name));if(!category)return null;
+ const d=new Date(`${today}T12:00:00`);if(/\bkemarin\b/i.test(text))d.setDate(d.getDate()-1);
+ const description=text.replace(m[0],'').replace(/\b(catat|tadi|hari ini|kemarin|saya|aku|gw|Rp)\b/gi,'').replace(/\s+/g,' ').trim();
+ return {kind:'transaction' as const,context,type:type as 'income'|'expense',amount,categoryId:category.id,description:description||category.name,date:localDate(d),hppAmount:0};
+}

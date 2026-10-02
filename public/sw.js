@@ -1,0 +1,5 @@
+const CACHE='finora-living-v4';
+const CORE=['/','/manifest.webmanifest','/icon-192.png','/icon-512.png','/art/bg-day.webp','/art/elaina-main.webp','/art/elaina-blink.webp','/art/elaina-avatar.webp','/art/brand-symbol.webp','/art/star-ornament.webp','/fonts/inter-latin-variable.woff2'];
+self.addEventListener('install',event=>{event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(CORE)));self.skipWaiting()});
+self.addEventListener('activate',event=>{event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key.startsWith('finora-')&&key!==CACHE).map(key=>caches.delete(key)))));self.clients.claim()});
+self.addEventListener('fetch',event=>{const req=event.request;const url=new URL(req.url);if(req.method!=='GET'||url.origin!==self.location.origin||url.pathname.startsWith('/api/'))return;event.respondWith(fetch(req).then(res=>{if(res.ok){const copy=res.clone();caches.open(CACHE).then(cache=>cache.put(req,copy))}return res}).catch(async()=>await caches.match(req)||(req.mode==='navigate'?await caches.match('/'):Response.error())))});

@@ -1,0 +1,27 @@
+{
+  "checkedAt": "2026-10-02T07:07:30.792Z",
+  "passed": [
+    "1440px Home tanpa overflow",
+    "390px Home tanpa overflow",
+    "390px Agent tanpa overflow",
+    "320px Simulasi tanpa overflow",
+    "Elaina dapat disapa",
+    "Simpan + favorit + urungkan transaksi baru",
+    "Pintasan mengisi draf; duplikat meminta persetujuan",
+    "Hapus dan urungkan mengembalikan catatan",
+    "Agent menyiapkan, membatalkan, dan menyimpan hanya setelah konfirmasi",
+    "Jawaban Agent memiliki catatan sumber yang dapat dibuka",
+    "Memori dapat dibuat dan diubah",
+    "Simulasi interaktif tidak menulis catatan",
+    "Obrolan, memori, dan perhitungan terpisah per konteks",
+    "Memori dapat dihapus",
+    "OCR terkompresi dipanggil eksplisit; hasil hanya draf (mock)",
+    "Agent menjalankan alat baca dan menyusun jawaban dalam maksimal dua panggilan (mock)",
+    "Mode hemat gerak menghentikan animasi",
+    "Reload offline dan Agent lokal berfungsi",
+    "Tidak ada runtime page error",
+    "HTML portable: onboarding, data contoh, gambar, Agent lokal, simulasi"
+  ],
+  "pageErrors": [],
+  "geminiLive": false
+}

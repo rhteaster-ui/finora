@@ -1,0 +1,26 @@
+import {db,initialize} from './db';
+import {validAmount} from './finance';
+const legacy=['transactions','capitals','categories','debts','payments','goals','limits','attachments','events','rules'] as const;
+const tables=[...legacy,'templates','memories','chats'] as const;
+const to64=(blob:Blob)=>new Promise<string>((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result).split(',')[1]);reader.onerror=()=>reject(reader.error);reader.readAsDataURL(blob)});
+export async function makeBackup(){const data:Record<string,unknown>={};await db.transaction('r',tables.map(t=>db.table(t)),async()=>{for(const name of tables)data[name]=await db.table(name).toArray()});data.attachments=await Promise.all((data.attachments as {blob:Blob}[]).map(async x=>({...x,blob:await to64(x.blob)})));return{schemaVersion:2,appVersion:'4.0.0',createdAt:new Date().toISOString(),data}}
+export function inspectBackup(value:unknown){
+ if(!value||typeof value!=='object')throw Error('Format backup tidak valid.');const x=value as Record<string,unknown>;if(![1,2].includes(Number(x.schemaVersion))||!x.data||typeof x.data!=='object')throw Error('Versi backup tidak didukung.');const data={...x.data} as Record<string,any[]>;
+ for(const name of tables){if(x.schemaVersion===1&&!legacy.includes(name as typeof legacy[number]))data[name]=[];if(!Array.isArray(data[name])||data[name].length>100000)throw Error(`Data ${name} tidak valid.`);const ids=new Set();for(const row of data[name]){if(!row||typeof row.id!=='string'||ids.has(row.id))throw Error(`ID ${name} rusak/duplikat.`);ids.add(row.id)}}
+ const date=(v:unknown)=>typeof v==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(v)&&!Number.isNaN(Date.parse(v+'T12:00:00'))&&new Date(v+'T12:00:00Z').toISOString().slice(0,10)===v;
+ for(const row of data.transactions){if(!validAmount(row.amount)||!['personal','business'].includes(row.context)||!['income','expense'].includes(row.type)||!date(row.date)||typeof row.description!=='string'||!Number.isSafeInteger(row.hppAmount)||row.hppAmount<0||row.hppAmount>row.amount||(row.context==='personal'||row.type==='expense')&&row.hppAmount!==0||!data.categories.some(c=>c.id===row.categoryId&&c.context===row.context&&c.type===row.type))throw Error('Record transaksi rusak.');}
+ for(const row of data.capitals)if(!validAmount(row.amount)||!['initial','add','withdraw'].includes(row.kind)||!date(row.date))throw Error('Record modal rusak.');
+ for(const row of data.debts)if(!validAmount(row.principal)||!['personal','business'].includes(row.context)||!['debt','receivable'].includes(row.kind)||!date(row.date))throw Error('Record kewajiban rusak.');
+ for(const row of data.payments)if(!validAmount(row.amount)||!date(row.date)||!data.debts.some(d=>d.id===row.debtId))throw Error('Record pembayaran rusak.');
+ for(const d of data.debts)if(data.payments.filter(p=>p.debtId===d.id).reduce((a,p)=>a+p.amount,0)>d.principal)throw Error('Pembayaran melebihi pokok.');
+ for(const row of data.goals)if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(row.month)||![row.revenueTarget,row.profitTarget].every(n=>Number.isSafeInteger(n)&&n>=0&&n<=1e12))throw Error('Target rusak.');
+ for(const row of data.limits)if(!validAmount(row.amount)||typeof row.warningThreshold!=='number'||row.warningThreshold<=0||row.warningThreshold>1)throw Error('Limit rusak.');
+ for(const row of data.templates)if(!validAmount(row.amount)||!['personal','business'].includes(row.context)||!['income','expense'].includes(row.type)||typeof row.description!=='string'||!Number.isSafeInteger(row.hppAmount)||row.hppAmount<0||row.hppAmount>row.amount)throw Error('Pintasan rusak.');
+ for(const row of data.memories)if(typeof row.text!=='string'||row.text.length>500||!['personal','business','all'].includes(row.context))throw Error('Memori rusak.');
+ for(const row of data.chats)if(typeof row.text!=='string'||row.text.length>8000||!['personal','business'].includes(row.context)||!['user','agent'].includes(row.role))throw Error('Riwayat Agent rusak.');
+ for(const row of data.attachments)if(typeof row.blob!=='string'||row.blob.length>7_000_000||!/^image\/(jpeg|png|webp|gif)$/.test(row.mimeType)||!/^[A-Za-z0-9+/]*={0,2}$/.test(row.blob))throw Error('Bukti backup tidak valid.');
+ return {data,counts:`${data.transactions.length} transaksi · ${data.debts.length} kewajiban · ${data.templates.length} pintasan · ${data.memories.length} memori`};
+}
+export async function restoreBackup(value:unknown){const {data}=inspectBackup(value);const decoded=data.attachments.map(x=>({...x,blob:new Blob([Uint8Array.from(atob(x.blob),c=>c.charCodeAt(0))],{type:x.mimeType})}));await db.transaction('rw',tables.map(name=>db.table(name)),async()=>{for(const name of tables)await db.table(name).clear();for(const name of tables){const items=name==='attachments'?decoded:data[name];if(items.length)await db.table(name).bulkPut(items)}})}
+export async function resetData(){await db.transaction('rw',tables.map(name=>db.table(name)),async()=>{for(const name of tables)await db.table(name).clear()});await initialize()}
+export function downloadBlob(blob:Blob,name:string){const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),10000)}
